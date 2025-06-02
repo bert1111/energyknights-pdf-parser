@@ -1,10 +1,11 @@
-import requests
-import PyPDF2
-from io import BytesIO
-import re
+from pyscript import service
 
-@time_trigger("once(00:00)")  # Voer elke dag om 00:00 uit
 def fetch_energy_prices():
+    import requests
+    import PyPDF2
+    from io import BytesIO
+    import re
+
     url = "https://www.energyknights.be/website/getCurrentTariffchart/variable/nl"
     response = requests.get(url)
     pdf_file = BytesIO(response.content)
@@ -13,46 +14,38 @@ def fetch_energy_prices():
     for page in reader.pages:
         text += page.extract_text()
 
-    # Debug: toon de volledige PDF-tekst (handig om de regex te testen)
+    # Debug: toon de volledige PDF-tekst (optioneel)
     log.info("PDF tekst voor debugging:")
     log.info(text)
 
     # Zet tekst in één regel voor betere regex matching
     text = text.replace("\n", " ")
 
-    # --- ENERGIE PRIJZEN ---
+    # --- ENERGIEPRIJZEN ---
     match_dag = re.search(r"Verbruik dag.*?(\d+,\d+)", text)
     match_nacht = re.search(r"Verbruik nacht.*?(\d+,\d+)", text)
-    match_solar = re.search(r"optie \"solar\".*?(\d+,\d+)", text)
+    match_solar = re.search(r"optie\s*\"solar\"\s*\(c€/kWh\)\s*\(\d\)\s*(\d+,\d+)", text)
+    if not match_solar:
+        match_solar = re.search(r"optie\s*\"solar\".*?(\d+,\d+)", text)  # fallback
 
-    # --- NETTARIEF ---
-    # Pas de regex aan aan de structuur van jouw PDF!
-    match_net = re.search(r"Fluvius Limburg.*?(\d+,\d+)", text)
-    if match_net:
-        net_tarief = float(match_net.group(1).replace(",", ".")) / 100
-    else:
-        net_tarief = 0.0680  # valback waarde
+    # --- NETTARIEF (digitale meter, Fluvius Limburg) ---
+    match_net = re.search(r"Fluvius \(Limburg\)\s*(\d+,\d+)", text)
+    net_tarief = float(match_net.group(1).replace(",", ".")) / 100 if match_net else 0.0680
 
     # --- BELASTINGEN EN HEFFINGEN ---
-    # Pas de regex aan aan de structuur van jouw PDF!
-    # Voorbeeld voor accijns, energiebijdrage, groene stroom, WKK
-    match_accijns = re.search(r"Bijzondere accijns.*?(\d+,\d+)", text)
-    accijns = float(match_accijns.group(1).replace(",", ".")) / 100 if match_accijns else 0.0503
+    match_accijns = re.search(r"Bijzondere accijns\s*\(c€/kWh\).*?(\d+,\d+)", text)
+    accijns = float(match_accijns.group(1).replace(",", ".")) / 100 if match_accijns else 0.050329
 
-    match_bijdrage = re.search(r"Energiebijdrage.*?(\d+,\d+)", text)
-    bijdrage = float(match_bijdrage.group(1).replace(",", ".")) / 100 if match_bijdrage else 0.0020
+    match_bijdrage = re.search(r"Energiebijdrage\s*\(c€/kWh\).*?(\d+,\d+)", text)
+    bijdrage = float(match_bijdrage.group(1).replace(",", ".")) / 100 if match_bijdrage else 0.002042
 
-    match_groen = re.search(r"Bijdrage groene stroom.*?(\d+,\d+)", text)
+    match_groen = re.search(r"Bijdrage groene stroom\s*(\d+,\d+)", text)
     groen = float(match_groen.group(1).replace(",", ".")) / 100 if match_groen else 0.0116
 
-    match_wkk = re.search(r"Bijdrage WKK.*?(\d+,\d+)", text)
+    match_wkk = re.search(r"Bijdrage WKK\s*(\d+,\d+)", text)
     wkk = float(match_wkk.group(1).replace(",", ".")) / 100 if match_wkk else 0.0036
 
     belastingen = accijns + bijdrage + groen + wkk
-
-    # --- VASTE VERGOEDINGEN (indien in de PDF, anders handmatig) ---
-    # Voorbeeld: match_databeheer = re.search(r"Databeheer.*?(\d+,\d+)", text)
-    # Hier laten we het even achterwege, want dit is meestal een jaarlijkse kost en niet per kWh
 
     # --- BEREKENING VOOR DAGTARIEF ---
     if match_dag:
@@ -60,6 +53,8 @@ def fetch_energy_prices():
         totale_prijs_dag = prijs_dag + net_tarief + belastingen
         input_number.set_value(entity_id="input_number.aankoopprijs_elektriciteit_tarief_hoog", value=totale_prijs_dag)
         log.info(f"Totale dagtarief (hoog) gevonden: {totale_prijs_dag} EUR")
+    else:
+        log.warning("Dagtarief niet gevonden!")
 
     # --- BEREKENING VOOR NACHTTARIEF ---
     if match_nacht:
@@ -67,12 +62,23 @@ def fetch_energy_prices():
         totale_prijs_nacht = prijs_nacht + net_tarief + belastingen
         input_number.set_value(entity_id="input_number.aankoopprijs_elektriciteit_tarief_laag", value=totale_prijs_nacht)
         log.info(f"Totale nachttarief (laag) gevonden: {totale_prijs_nacht} EUR")
+    else:
+        log.warning("Nachttarief niet gevonden!")
 
     # --- BEREKENING VOOR SOLAR (TERUGLEVERING) ---
     if match_solar:
         prijs_solar = float(match_solar.group(1).replace(",", ".")) / 100
-        # Voor teruglevering gelden meestal geen netbeheerkosten of belastingen
         input_number.set_value(entity_id="input_number.verkoopprijs_elektriciteit_zonnepanelen", value=prijs_solar)
         log.info(f"Solar (teruglevering) gevonden: {prijs_solar} EUR")
+    else:
+        log.warning("Solar (teruglevering) niet gevonden!")
 
-input("Druk op Enter om het venster te sluiten...")
+# Service om handmatig uit te voeren
+@service
+def get_energyknights_data():
+    fetch_energy_prices()
+
+# Tijdtrigger om automatisch uit te voeren (elke dag om 00:00)
+@time_trigger("once(00:00)")
+def run_daily():
+    fetch_energy_prices()
