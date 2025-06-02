@@ -1,2 +1,2 @@
 # energyknights-pdf-parser
-Load prices into HA
+Load Energy knights variable prices into HA
