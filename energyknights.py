@@ -1,48 +1,47 @@
-from pyscript import service
-
 def fetch_energy_prices():
-    import requests
-    import PyPDF2
-    from io import BytesIO
     import re
 
-    url = "https://www.energyknights.be/website/getCurrentTariffchart/variable/nl"
-    response = requests.get(url)
-    pdf_file = BytesIO(response.content)
-    reader = PyPDF2.PdfReader(pdf_file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text()
+    def download_and_extract(url):
+        import requests
+        import PyPDF2
+        from io import BytesIO
 
-    # Debug: toon de volledige PDF-tekst (optioneel)
+        response = requests.get(url)
+        pdf_file = BytesIO(response.content)
+        reader = PyPDF2.PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text()
+        return text
+
+    url = "https://www.energyknights.be/website/getCurrentTariffchart/variable/nl"
+    # Gebruik task.executor om blokkeren te voorkomen!
+    text = task.executor(download_and_extract, url)
     log.info("PDF tekst voor debugging:")
     log.info(text)
 
-    # Zet tekst in één regel voor betere regex matching
     text = text.replace("\n", " ")
 
     # --- ENERGIEPRIJZEN ---
     match_dag = re.search(r"Verbruik dag.*?(\d+,\d+)", text)
     match_nacht = re.search(r"Verbruik nacht.*?(\d+,\d+)", text)
-    match_solar = re.search(r"optie\s*\"solar\"\s*\(c€/kWh\)\s*\(\d\)\s*(\d+,\d+)", text)
-    if not match_solar:
-        match_solar = re.search(r"optie\s*\"solar\".*?(\d+,\d+)", text)  # fallback
+    match_solar = re.search(r"optie\s*\"solar\".*?(\d+,\d+)", text)
 
-    # --- NETTARIEF (digitale meter, Fluvius Limburg) ---
+    # --- NETTARIEF (voorbeeld voor digitale meter, Fluvius Limburg) ---
     match_net = re.search(r"Fluvius \(Limburg\)\s*(\d+,\d+)", text)
     net_tarief = float(match_net.group(1).replace(",", ".")) / 100 if match_net else 0.0680
 
     # --- BELASTINGEN EN HEFFINGEN ---
-    match_accijns = re.search(r"Bijzondere accijns\s*\(c€/kWh\).*?(\d+,\d+)", text)
+    match_accijns = re.search(r"Bijzondere accijns.*?(\d+,\d+)", text)
     accijns = float(match_accijns.group(1).replace(",", ".")) / 100 if match_accijns else 0.050329
 
-    match_bijdrage = re.search(r"Energiebijdrage\s*\(c€/kWh\).*?(\d+,\d+)", text)
+    match_bijdrage = re.search(r"Energiebijdrage.*?(\d+,\d+)", text)
     bijdrage = float(match_bijdrage.group(1).replace(",", ".")) / 100 if match_bijdrage else 0.002042
 
-    match_groen = re.search(r"Bijdrage groene stroom\s*(\d+,\d+)", text)
+    match_groen = re.search(r"Bijdrage groene stroom.*?(\d+,\d+)", text)
     groen = float(match_groen.group(1).replace(",", ".")) / 100 if match_groen else 0.0116
 
-    match_wkk = re.search(r"Bijdrage WKK\s*(\d+,\d+)", text)
+    match_wkk = re.search(r"Bijdrage WKK.*?(\d+,\d+)", text)
     wkk = float(match_wkk.group(1).replace(",", ".")) / 100 if match_wkk else 0.0036
 
     belastingen = accijns + bijdrage + groen + wkk
@@ -72,13 +71,3 @@ def fetch_energy_prices():
         log.info(f"Solar (teruglevering) gevonden: {prijs_solar} EUR")
     else:
         log.warning("Solar (teruglevering) niet gevonden!")
-
-# Service om handmatig uit te voeren
-@service
-def get_energyknights_data():
-    fetch_energy_prices()
-
-# Tijdtrigger om automatisch uit te voeren (elke dag om 00:00)
-@time_trigger("once(00:00)")
-def run_daily():
-    fetch_energy_prices()
