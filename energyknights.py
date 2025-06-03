@@ -1,26 +1,36 @@
-def fetch_energy_prices():
-    import re
+import requests
+import PyPDF2
+from io import BytesIO
+import re
 
-    def download_and_extract(url):
-        import requests
-        import PyPDF2
-        from io import BytesIO
-
-        response = requests.get(url)
-        pdf_file = BytesIO(response.content)
-        reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text()
-        return text
+@service
+async def fetch_energyknights_prices():
+    """
+    Downloadt de laatste tariefkaart van Energy Knights, leest de prijzen uit en zet ze in Home Assistant input_numbers.
+    """
 
     url = "https://www.energyknights.be/website/getCurrentTariffchart/variable/nl"
-    # Gebruik task.executor om blokkeren te voorkomen!
-    text = task.executor(download_and_extract, url)
-    log.info("PDF tekst voor debugging:")
-    log.info(text)
+    log.info(f"Downloaden van: {url}")
 
-    text = text.replace("\n", " ")
+    # Download PDF via task.executor (blocking call)
+    response = await task.executor(requests.get, url)
+    if response.status_code != 200:
+        log.error(f"Kon PDF niet downloaden, status code: {response.status_code}")
+        return
+
+    # Lees PDF in via task.executor (ook blocking)
+    pdf_file = BytesIO(response.content)
+    reader = await task.executor(PyPDF2.PdfReader, pdf_file)
+
+    # Tekst uit alle pagina's halen
+    text = ""
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text.replace("\n", " ")
+
+    # Debug: log de eerste 500 tekens
+    log.info(f"Eerste 500 tekens uit PDF: {text[:500]}")
 
     # --- ENERGIEPRIJZEN ---
     match_dag = re.search(r"Verbruik dag.*?(\d+,\d+)", text)
@@ -50,8 +60,8 @@ def fetch_energy_prices():
     if match_dag:
         prijs_dag = float(match_dag.group(1).replace(",", ".")) / 100
         totale_prijs_dag = prijs_dag + net_tarief + belastingen
-        input_number.set_value(entity_id="input_number.aankoopprijs_elektriciteit_tarief_hoog", value=totale_prijs_dag)
-        log.info(f"Totale dagtarief (hoog) gevonden: {totale_prijs_dag} EUR")
+        await service.call("input_number", "set_value", entity_id="input_number.aankoopprijs_elektriciteit_tarief_hoog", value=round(totale_prijs_dag, 4))
+        log.info(f"Totale dagtarief (hoog) gevonden: {totale_prijs_dag} EUR/kWh")
     else:
         log.warning("Dagtarief niet gevonden!")
 
@@ -59,15 +69,17 @@ def fetch_energy_prices():
     if match_nacht:
         prijs_nacht = float(match_nacht.group(1).replace(",", ".")) / 100
         totale_prijs_nacht = prijs_nacht + net_tarief + belastingen
-        input_number.set_value(entity_id="input_number.aankoopprijs_elektriciteit_tarief_laag", value=totale_prijs_nacht)
-        log.info(f"Totale nachttarief (laag) gevonden: {totale_prijs_nacht} EUR")
+        await service.call("input_number", "set_value", entity_id="input_number.aankoopprijs_elektriciteit_tarief_laag", value=round(totale_prijs_nacht, 4))
+        log.info(f"Totale nachttarief (laag) gevonden: {totale_prijs_nacht} EUR/kWh")
     else:
         log.warning("Nachttarief niet gevonden!")
 
     # --- BEREKENING VOOR SOLAR (TERUGLEVERING) ---
     if match_solar:
         prijs_solar = float(match_solar.group(1).replace(",", ".")) / 100
-        input_number.set_value(entity_id="input_number.verkoopprijs_elektriciteit_zonnepanelen", value=prijs_solar)
-        log.info(f"Solar (teruglevering) gevonden: {prijs_solar} EUR")
+        await service.call("input_number", "set_value", entity_id="input_number.verkoopprijs_elektriciteit_zonnepanelen", value=round(prijs_solar, 4))
+        log.info(f"Solar (teruglevering) gevonden: {prijs_solar} EUR/kWh")
     else:
         log.warning("Solar (teruglevering) niet gevonden!")
+
+    log.info("Energieprijzen van Energy Knights zijn bijgewerkt.")

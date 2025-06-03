@@ -24,5 +24,5 @@ dowload both files (requirements.txt and energyknights.py) and place them in the
 create an automation to get the data periodically
 
 ```
-service: pyscript.get_energyknights_data
+action: Pyscript Python scripting: fetch_energyknights_prices
 ```
