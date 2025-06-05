@@ -59,7 +59,7 @@ actions:
           - data:
               message: Prijs is gewijzigd, automatie stopt.
               title: Energy Knights
-            action: notify.mobile_app_moto_g72
+            action: notify.mobile_app_XXXX
       - conditions:
           - condition: template
             value_template: "{{ repeat.index > max_attempts }}"
@@ -71,7 +71,7 @@ actions:
           - data:
               message: Maximaal aantal pogingen (6) bereikt, automatie stopt.
               title: Energy Knights
-            action: notify.mobile_app_moto_g72
+            action: notify.mobile_app_XXXX
 mode: restart
 variables:
   max_attempts: 6
