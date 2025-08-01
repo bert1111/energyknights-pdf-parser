@@ -29,7 +29,8 @@ action: Pyscript Python scripting: fetch_energyknights_prices
 
 Automation example, untested, so probably contains an error somewhere.
 
-```alias: Energy Knights prijzen ophalen - met datum validatie
+```
+alias: Energy Knights prijzen ophalen - met datum validatie
 description: >-
   Haalt Energy Knights prijzen op en blijft proberen tot de juiste maand
   beschikbaar is
